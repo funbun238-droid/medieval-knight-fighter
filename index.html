@@ -5,63 +5,120 @@
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
     <title>Medieval Knight Fighter</title>
     <style>
-        body {
+        * {
             margin: 0;
             padding: 0;
+            box-sizing: border-box;
+        }
+        body {
+            background: linear-gradient(135deg, #1a1a2e 0%, #16213e 100%);
             display: flex;
             justify-content: center;
             align-items: center;
             min-height: 100vh;
-            background: linear-gradient(135deg, #1a1a2e 0%, #16213e 100%);
             font-family: 'Courier New', monospace;
+            color: #fff;
         }
         #gameContainer {
             text-align: center;
         }
         canvas {
-            border: 4px solid #8b7355;
-            background: linear-gradient(180deg, #87ceeb 0%, #e6d7a3 70%, #5d4e37 100%);
-            box-shadow: 0 0 30px rgba(0, 0, 0, 0.8);
+            border: 4px solid #c9a961;
+            box-shadow: 0 0 30px rgba(201, 169, 97, 0.5);
+            background: #2d3748;
             image-rendering: pixelated;
             image-rendering: crisp-edges;
         }
+        #gameTitle {
+            font-size: 3em;
+            margin-bottom: 20px;
+            color: #c9a961;
+            text-shadow: 0 0 10px rgba(201, 169, 97, 0.8);
+        }
         #controls {
             margin-top: 20px;
-            color: #d4af37;
-            background: rgba(0, 0, 0, 0.7);
             padding: 20px;
+            background: rgba(0,0,0,0.5);
             border-radius: 10px;
-            max-width: 800px;
+            max-width: 600px;
+            margin-left: auto;
+            margin-right: auto;
         }
         .control-row {
             margin: 10px 0;
-            font-size: 16px;
-        }
-        h1 {
-            color: #d4af37;
-            text-shadow: 2px 2px 4px #000;
-            margin-bottom: 10px;
+            font-size: 1.1em;
         }
         .key {
-            background: #3a3a3a;
-            padding: 3px 8px;
-            border-radius: 3px;
-            border: 2px solid #d4af37;
-            display: inline-block;
-            margin: 0 3px;
+            background: #c9a961;
+            color: #1a1a2e;
+            padding: 5px 10px;
+            border-radius: 5px;
+            font-weight: bold;
+            margin: 0 5px;
+        }
+        #healthBars {
+            display: flex;
+            justify-content: space-between;
+            max-width: 800px;
+            margin: 20px auto;
+        }
+        .healthBar {
+            width: 45%;
+        }
+        .healthBar h3 {
+            margin-bottom: 5px;
+        }
+        .healthBarBg {
+            background: #333;
+            height: 30px;
+            border: 2px solid #c9a961;
+            border-radius: 5px;
+            overflow: hidden;
+        }
+        .healthBarFill {
+            height: 100%;
+            background: linear-gradient(90deg, #ff0000, #ff6b6b);
+            transition: width 0.3s ease;
         }
     </style>
 </head>
 <body>
     <div id="gameContainer">
-        <h1>⚔️ Medieval Knight Fighter ⚔️</h1>
-        <canvas id="gameCanvas" width="1200" height="600"></canvas>
+        <h1 id="gameTitle">⚔️ MEDIEVAL KNIGHT FIGHTER ⚔️</h1>
+
+        <div id="healthBars">
+            <div class="healthBar">
+                <h3>🛡️ PLAYER</h3>
+                <div class="healthBarBg">
+                    <div class="healthBarFill" id="playerHealth" style="width: 100%"></div>
+                </div>
+            </div>
+            <div class="healthBar">
+                <h3>👹 ENEMY</h3>
+                <div class="healthBarBg">
+                    <div class="healthBarFill" id="enemyHealth" style="width: 100%"></div>
+                </div>
+            </div>
+        </div>
+
+        <canvas id="gameCanvas" width="800" height="600"></canvas>
+
         <div id="controls">
-            <div class="control-row">🎮 <strong>CONTROLS</strong></div>
-            <div class="control-row"><span class="key">A</span> Move Left | <span class="key">D</span> Move Right</div>
-            <div class="control-row"><span class="key">Left Click</span> Attack | <span class="key">Right Click</span> Block | <span class="key">Space</span> Dodge</div>
+            <h2>🎮 CONTROLS</h2>
+            <div class="control-row">
+                <span class="key">A</span> Move Backward | 
+                <span class="key">D</span> Move Forward
+            </div>
+            <div class="control-row">
+                <span class="key">Left Click</span> Attack | 
+                <span class="key">Right Click</span> Block
+            </div>
+            <div class="control-row">
+                <span class="key">Spacebar</span> Dodge Roll
+            </div>
         </div>
     </div>
+
     <script src="game.js"></script>
 </body>
 </html>
