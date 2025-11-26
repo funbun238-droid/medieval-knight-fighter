@@ -1,655 +1,464 @@
-// ===== MEDIEVAL KNIGHT FIGHTER - Professional Game Engine =====
-const canvas = document.getElementById('gameCanvas');
+// Medieval Knight Fighter - Rebuilt Game Engine
+const canvas = document.getElementById('canvas');
 const ctx = canvas.getContext('2d');
 
 // Game Configuration
-const CONFIG = {
-    canvas: { width: 1024, height: 600 },
-    gravity: 0.8,
-    friction: 0.85,
-    jumpForce: -15,
-    moveSpeed: 5,
-    attackDamage: 12,
-    blockReduction: 0.7,
-    staminaCost: { attack: 20, dodge: 30 },
-    staminaRegen: 0.5,
+const GAME_CONFIG = {
+    currentStage: 1,
     stages: [
-        { name: '🏰 Castle Arena', bg: 'stage1_castle.webp', floor: 450 },
-        { name: '⛓️ Dark Dungeon', bg: 'stage2_dungeon.webp', floor: 450 },
-        { name: '🌅 Royal Courtyard', bg: 'stage3_courtyard.webp', floor: 450 }
-    ]
+        { name: 'Castle Arena', bg: 'assets/stages/stage1_castle.webp' },
+        { name: 'Dark Dungeon', bg: 'assets/stages/stage2_dungeon.webp' },
+        { name: 'Royal Courtyard', bg: 'assets/stages/stage3_courtyard.webp' }
+    ],
+    playerHealth: 100,
+    enemyHealth: 100,
+    particl
+
+es: [],
+    gameOver: false
 };
 
-// Game State
-const game = {
-    player: null,
-    enemy: null,
-    currentStage: 0,
-    round: 1,
-    particles: [],
-    screenShake: 0,
-    paused: false,
-    backgrounds: {},
-    bgLoaded: false
-};
-
-// Particle System
-class Particle {
-    constructor(x, y, color, size, velocity) {
-        this.x = x;
-        this.y = y;
-        this.color = color;
-        this.size = size;
-        this.velocity = velocity || { x: (Math.random() - 0.5) * 4, y: (Math.random() - 0.5) * 4 };
-        this.life = 1.0;
-        this.decay = 0.02;
-    }
-
-    update() {
-        this.x += this.velocity.x;
-        this.y += this.velocity.y;
-        this.velocity.y += 0.2; // gravity
-        this.life -= this.decay;
-        return this.life > 0;
-    }
-
-    draw(ctx) {
-        ctx.save();
-        ctx.globalAlpha = this.life;
-        ctx.fillStyle = this.color;
-        ctx.beginPath();
-        ctx.arc(this.x, this.y, this.size, 0, Math.PI * 2);
-        ctx.fill();
-        ctx.restore();
-    }
-}
-
-// Sprite Animation System
-class SpriteSheet {
-    constructor(imagePath, frameWidth, frameHeight, frames) {
+// Sprite animation class with smooth frame interpolation
+class AnimatedSprite {
+    constructor(imagePath, frameCount, frameWidth, frameHeight) {
         this.image = new Image();
         this.image.src = imagePath;
+        this.frameCount = frameCount;
         this.frameWidth = frameWidth;
         this.frameHeight = frameHeight;
-        this.frames = frames;
+        this.currentFrame = 0;
+        this.frameTimer = 0;
+        this.frameDuration = 80; // ms per frame
         this.loaded = false;
         this.image.onload = () => { this.loaded = true; };
     }
 
-    drawFrame(ctx, frame, x, y, width, height, flipX = false) {
+    update(deltaTime) {
+        this.frameTimer += deltaTime;
+        if (this.frameTimer >= this.frameDuration) {
+            this.frameTimer = 0;
+            this.currentFrame = (this.currentFrame + 1) % this.frameCount;
+        }
+    }
+
+    draw(ctx, x, y, scale = 1, flipX = false) {
         if (!this.loaded) return;
 
         ctx.save();
         if (flipX) {
-            ctx.translate(x + width, y);
+            ctx.translate(x + (this.frameWidth * scale), y);
             ctx.scale(-1, 1);
             ctx.drawImage(
                 this.image,
-                frame * this.frameWidth, 0,
+                this.currentFrame * this.frameWidth, 0,
                 this.frameWidth, this.frameHeight,
                 0, 0,
-                width, height
+                this.frameWidth * scale, this.frameHeight * scale
             );
         } else {
             ctx.drawImage(
                 this.image,
-                frame * this.frameWidth, 0,
+                this.currentFrame * this.frameWidth, 0,
                 this.frameWidth, this.frameHeight,
                 x, y,
-                width, height
+                this.frameWidth * scale, this.frameHeight * scale
             );
         }
         ctx.restore();
     }
+
+    reset() {
+        this.currentFrame = 0;
+        this.frameTimer = 0;
+    }
 }
 
-// Fighter Class
+// Fighter character class
 class Fighter {
     constructor(x, y, isPlayer = true) {
         this.x = x;
         this.y = y;
-        this.width = 80;
-        this.height = 80;
+        this.width = 192; // 64 * 3 scale
+        this.height = 192;
         this.isPlayer = isPlayer;
 
         // Physics
         this.velocityX = 0;
         this.velocityY = 0;
+        this.speed = 4;
+        this.gravity = 0.5;
+        this.jumpPower = -12;
         this.grounded = false;
 
-        // Combat Stats
-        this.health = 100;
-        this.maxHealth = 100;
-        this.stamina = 100;
-        this.maxStamina = 100;
-
-        // State
-        this.state = 'idle';
-        this.facing = isPlayer ? 1 : -1; // 1 = right, -1 = left
-        this.isAttacking = false;
-        this.isBlocking = false;
-        this.isDodging = false;
-        this.canMove = true;
-        this.invulnerable = false;
-
-        // Animation
-        this.frameIndex = 0;
-        this.frameTimer = 0;
-        this.animationSpeed = 8; // fps
-        this.sprites = {};
-        this.loadSprites();
-
         // Combat
-        this.combo = 0;
-        this.lastHitTime = 0;
+        this.attacking = false;
+        this.blocking = false;
+        this.dodging = false;
         this.attackCooldown = 0;
+        this.dodgeCooldown = 0;
+        this.invincible = false;
+
+        // Animation state
+        this.currentState = 'idle';
+        this.animations = {};
+        this.currentAnim = null;
+        this.animLocked = false;
+
+        // Load sprites
+        this.loadSprites();
 
         // AI (for enemy)
         if (!isPlayer) {
             this.ai = {
                 state: 'idle',
                 timer: 0,
-                decisionCooldown: 0,
-                aggression: 0.6
+                attackRange: 220,
+                retreatDistance: 100
             };
         }
     }
 
     loadSprites() {
-        const prefix = this.isPlayer ? 'knight_' : 'enemy_';
-        const spriteDefs = {
-            idle: { file: `${prefix}idle.webp`, frames: 4 },
-            walk: { file: `${prefix}walk_forward.webp`, frames: 8 },
-            attack: { file: `${prefix}attack.webp`, frames: 6 },
-            block: { file: `${prefix}block.webp`, frames: 4 },
-            dodge: { file: this.isPlayer ? `${prefix}dodge.webp` : null, frames: 6 }
+        const prefix = this.isPlayer ? 'knight' : 'enemy';
+        this.animations = {
+            idle: new AnimatedSprite(`assets/sprites/${prefix}_idle.webp`, 4, 64, 64),
+            walkForward: new AnimatedSprite(`assets/sprites/knight_walk_forward.webp`, 8, 64, 64),
+            walkBackward: new AnimatedSprite(`assets/sprites/knight_walk_backward.webp`, 8, 64, 64),
+            attack: new AnimatedSprite(`assets/sprites/${prefix}_attack.webp`, 6, 64, 64),
+            block: new AnimatedSprite(`assets/sprites/${prefix}_block.webp`, 4, 64, 64),
+            dodge: new AnimatedSprite(`assets/sprites/knight_dodge.webp`, 6, 64, 64)
         };
-
-        for (const [anim, def] of Object.entries(spriteDefs)) {
-            if (def.file) {
-                this.sprites[anim] = new SpriteSheet(
-                    `assets/sprites/${def.file}`,
-                    64, 64, def.frames
-                );
-            }
-        }
+        this.currentAnim = this.animations.idle;
     }
 
     setState(newState, lock = false) {
-        if (this.state === newState) return;
-        if (lock && !this.canMove) return;
+        if (this.animLocked && !['idle'].includes(newState)) return;
 
-        this.state = newState;
-        this.frameIndex = 0;
-        this.frameTimer = 0;
-
-        if (lock) {
-            this.canMove = false;
+        if (this.currentState !== newState) {
+            this.currentState = newState;
+            this.currentAnim = this.animations[newState] || this.animations.idle;
+            this.currentAnim.reset();
+            this.animLocked = lock;
         }
     }
 
-    updateAnimation(deltaTime) {
-        const sprite = this.sprites[this.state];
-        if (!sprite || !sprite.loaded) return;
+    update(deltaTime, opponent) {
+        // Update cooldowns
+        this.attackCooldown = Math.max(0, this.attackCooldown - deltaTime);
+        this.dodgeCooldown = Math.max(0, this.dodgeCooldown - deltaTime);
 
-        const frameTime = 1000 / this.animationSpeed;
-        this.frameTimer += deltaTime;
+        // Update animation
+        if (this.currentAnim) {
+            this.currentAnim.update(deltaTime);
 
-        if (this.frameTimer >= frameTime) {
-            this.frameTimer = 0;
-            this.frameIndex++;
-
-            if (this.frameIndex >= sprite.frames) {
-                this.frameIndex = 0;
-
-                // Handle animation completion
-                if (this.state === 'attack') {
-                    this.finishAttack();
-                } else if (this.state === 'dodge') {
-                    this.finishDodge();
-                }
-            }
-
-            // Attack hit detection on key frame
-            if (this.state === 'attack' && this.frameIndex === Math.floor(sprite.frames / 2)) {
-                this.performAttackHit();
+            // Unlock animation when it completes
+            if (this.animLocked && this.currentAnim.currentFrame === 0 && this.currentAnim.frameTimer > 10) {
+                this.animLocked = false;
+                this.attacking = false;
+                this.dodging = false;
+                this.invincible = false;
+                this.setState('idle');
             }
         }
-    }
-    
-    performAttackHit() {
-        const opponent = this.isPlayer ? game.enemy : game.player;
-        if (!opponent) return;
 
-        const distance = Math.abs(this.x - opponent.x);
-        const attackRange = 100;
-
-        if (distance < attackRange && !opponent.isDodging) {
-            let damage = CONFIG.attackDamage;
-
-            if (opponent.isBlocking) {
-                damage *= CONFIG.blockReduction;
-                createHitEffect(opponent.x + opponent.width/2, opponent.y + opponent.height/2, '#4a9eff');
-            } else {
-                // Full damage
-                if (this.isPlayer) {
-                    this.combo++;
-                    showCombo(this.combo);
-                }
-                createHitEffect(opponent.x + opponent.width/2, opponent.y + opponent.height/2, '#ff4444');
-                game.screenShake = 10;
-            }
-
-            opponent.takeDamage(damage);
+        // AI for enemy
+        if (!this.isPlayer && opponent) {
+            this.updateAI(opponent, deltaTime);
         }
-    }
 
-    finishAttack() {
-        this.isAttacking = false;
-        this.canMove = true;
-        this.setState('idle');
-    }
+        // Physics
+        this.velocityY += this.gravity;
+        this.y += this.velocityY;
+        this.x += this.velocityX;
 
-    finishDodge() {
-        this.isDodging = false;
-        this.invulnerable = false;
-        this.canMove = true;
-        this.setState('idle');
-    }
-
-    takeDamage(amount) {
-        if (this.invulnerable || this.isDodging) return;
-
-        this.health = Math.max(0, this.health - amount);
-        this.updateHealthUI();
-
-        if (this.health <= 0) {
-            this.die();
+        // Ground collision
+        const groundY = 380;
+        if (this.y >= groundY) {
+            this.y = groundY;
+            this.velocityY = 0;
+            this.grounded = true;
         }
+
+        // Boundary
+        this.x = Math.max(50, Math.min(canvas.width - this.width - 50, this.x));
+
+        // Friction
+        this.velocityX *= 0.85;
     }
 
-    updateHealthUI() {
-        const prefix = this.isPlayer ? 'player' : 'enemy';
-        document.getElementById(`${prefix}Health`).style.width = `${(this.health / this.maxHealth) * 100}%`;
-        document.getElementById(`${prefix}HealthText`).textContent = `${Math.ceil(this.health)} / ${this.maxHealth}`;
-    }
+    updateAI(player, deltaTime) {
+        if (this.animLocked) return;
 
-    die() {
-        console.log(`${this.isPlayer ? 'Player' : 'Enemy'} defeated!`);
-        game.paused = true;
-        setTimeout(() => {
-            if (this.isPlayer) {
-                alert('💀 DEFEAT! Enemy Wins!\n\nPress R to restart');
-            } else {
-                game.round++;
-                if (game.round <= 3) {
-                    nextRound();
-                } else {
-                    alert('🏆 VICTORY! You defeated all enemies!\n\nPress R to play again');
-                }
-            }
-        }, 1000);
-    }
-
-    // Player Actions
-    attack() {
-        if (!this.canMove || this.stamina < CONFIG.staminaCost.attack || this.attackCooldown > 0) return;
-
-        this.stamina -= CONFIG.staminaCost.attack;
-        this.isAttacking = true;
-        this.setState('attack', true);
-        this.attackCooldown = 500;
-    }
-
-    block(active) {
-        if (!this.canMove) return;
-        this.isBlocking = active;
-        if (active && this.grounded) {
-            this.setState('block');
-        } else if (!active && this.state === 'block') {
-            this.setState('idle');
-        }
-    }
-
-    dodge() {
-        if (!this.canMove || this.stamina < CONFIG.staminaCost.dodge || !this.grounded) return;
-
-        this.stamina -= CONFIG.staminaCost.dodge;
-        this.isDodging = true;
-        this.invulnerable = true;
-        this.setState('dodge', true);
-
-        // Dodge movement
-        const dodgeDir = this.facing;
-        this.velocityX = dodgeDir * 8;
-    }
-
-    // AI Logic
-    updateAI(deltaTime) {
-        if (this.isPlayer || !game.player) return;
-
-        this.ai.decisionCooldown = Math.max(0, this.ai.decisionCooldown - deltaTime);
-
-        if (!this.canMove || this.ai.decisionCooldown > 0) return;
-
-        const player = game.player;
+        this.ai.timer += deltaTime;
         const distance = player.x - this.x;
         const absDistance = Math.abs(distance);
 
         // Decision making
-        if (absDistance < 120) {
-            // Close range combat
-            const rand = Math.random();
+        if (this.ai.timer > 1000) {
+            this.ai.timer = 0;
 
-            if (player.isAttacking && rand < 0.4) {
-                this.block(true);
-                setTimeout(() => this.block(false), 600);
-                this.ai.decisionCooldown = 800;
-            } else if (rand < 0.6) {
-                this.attack();
-                this.ai.decisionCooldown = 1000;
+            if (absDistance < this.ai.attackRange) {
+                const rand = Math.random();
+                if (rand > 0.6) {
+                    this.performAttack(player);
+                } else if (rand > 0.3) {
+                    this.performBlock();
+                } else {
+                    // Retreat
+                    this.velocityX = distance > 0 ? -3 : 3;
+                }
             } else {
-                // Retreat
-                this.velocityX = distance > 0 ? 3 : -3;
-                this.ai.decisionCooldown = 400;
+                // Approach player
+                this.velocityX = distance > 0 ? 2.5 : -2.5;
             }
-        } else if (absDistance < 300) {
-            // Medium range - approach or attack
-            if (Math.random() < 0.3) {
-                this.attack();
-                this.ai.decisionCooldown = 1200;
+        }
+
+        // Update movement animation
+        if (!this.animLocked) {
+            if (Math.abs(this.velocityX) > 0.5) {
+                this.setState('idle'); // Could use walk anims if available
             } else {
-                // Move towards player
-                this.velocityX = distance > 0 ? -CONFIG.moveSpeed * 0.7 : CONFIG.moveSpeed * 0.7;
-                this.setState('walk');
-                this.ai.decisionCooldown = 300;
+                this.setState('idle');
             }
-        } else {
-            // Far range - approach
-            this.velocityX = distance > 0 ? -CONFIG.moveSpeed : CONFIG.moveSpeed;
-            this.setState('walk');
-            this.ai.decisionCooldown = 500;
         }
     }
 
-    // Physics Update
-    updatePhysics() {
-        const stage = CONFIG.stages[game.currentStage];
+    performAttack(opponent) {
+        if (this.attackCooldown > 0 || this.animLocked) return;
 
-        // Apply gravity
-        if (!this.grounded) {
-            this.velocityY += CONFIG.gravity;
-        }
+        this.attacking = true;
+        this.setState('attack', true);
+        this.attackCooldown = 800;
 
-        // Apply velocity
-        this.x += this.velocityX;
-        this.y += this.velocityY;
+        // Check hit after animation delay
+        setTimeout(() => {
+            if (opponent && !opponent.blocking && !opponent.invincible) {
+                const distance = Math.abs(this.x - opponent.x);
+                if (distance < 220) {
+                    const damage = 12 + Math.floor(Math.random() * 6);
+                    if (this.isPlayer) {
+                        GAME_CONFIG.enemyHealth = Math.max(0, GAME_CONFIG.enemyHealth - damage);
+                        updateHealthBar('enemy', GAME_CONFIG.enemyHealth);
+                    } else {
+                        GAME_CONFIG.playerHealth = Math.max(0, GAME_CONFIG.playerHealth - damage);
+                        updateHealthBar('player', GAME_CONFIG.playerHealth);
+                    }
 
-        // Friction
-        this.velocityX *= CONFIG.friction;
-
-        // Ground collision
-        if (this.y + this.height >= stage.floor) {
-            this.y = stage.floor - this.height;
-            this.velocityY = 0;
-            this.grounded = true;
-        } else {
-            this.grounded = false;
-        }
-
-        // Stage boundaries
-        const padding = 50;
-        this.x = Math.max(padding, Math.min(CONFIG.canvas.width - this.width - padding, this.x));
-
-        // Update facing direction
-        if (this.velocityX > 0.5) this.facing = 1;
-        else if (this.velocityX < -0.5) this.facing = -1;
+                    // Hit particles
+                    createHitEffect(opponent.x + opponent.width/2, opponent.y + opponent.height/2);
+                }
+            }
+        }, 300);
     }
 
-    // Stamina regeneration
-    updateStamina(deltaTime) {
-        if (!this.isAttacking && !this.isDodging) {
-            this.stamina = Math.min(this.maxStamina, this.stamina + CONFIG.staminaRegen);
-        }
-
-        const prefix = this.isPlayer ? 'player' : 'enemy';
-        document.getElementById(`${prefix}Stamina`).style.width = `${(this.stamina / this.maxStamina) * 100}%`;
+    performBlock() {
+        if (this.animLocked) return;
+        this.blocking = true;
+        this.setState('block', true);
+        setTimeout(() => { this.blocking = false; }, 600);
     }
 
-    update(deltaTime) {
-        if (game.paused) return;
+    performDodge() {
+        if (this.dodgeCooldown > 0 || this.animLocked) return;
 
-        this.updateAnimation(deltaTime);
-        this.updatePhysics();
-        this.updateStamina(deltaTime);
+        this.dodging = true;
+        this.invincible = true;
+        this.setState('dodge', true);
+        this.dodgeCooldown = 1500;
 
-        if (!this.isPlayer) {
-            this.updateAI(deltaTime);
-        }
-
-        this.attackCooldown = Math.max(0, this.attackCooldown - deltaTime);
+        // Quick dash
+        this.velocityX = (keys['a'] ? -1 : 1) * 15;
     }
 
     draw(ctx) {
-        const sprite = this.sprites[this.state];
-        if (!sprite || !sprite.loaded) {
-            // Fallback rectangle
-            ctx.fillStyle = this.isPlayer ? '#4a9eff' : '#ff4444';
-            ctx.fillRect(this.x, this.y, this.width, this.height);
-            return;
+        if (this.currentAnim) {
+            this.currentAnim.draw(ctx, this.x, this.y, 3, !this.isPlayer);
         }
 
-        sprite.drawFrame(
-            ctx,
-            this.frameIndex,
-            this.x, this.y,
-            this.width, this.height,
-            this.facing < 0
-        );
-
         // Debug hitbox (optional)
-        // ctx.strokeStyle = this.isPlayer ? '#4a9eff' : '#ff4444';
+        // ctx.strokeStyle = 'red';
         // ctx.strokeRect(this.x, this.y, this.width, this.height);
     }
 }
 
-// Effects and UI Functions
-function createHitEffect(x, y, color) {
+// Particle system for effects
+function createHitEffect(x, y) {
     for (let i = 0; i < 15; i++) {
-        game.particles.push(new Particle(x, y, color, Math.random() * 4 + 2));
+        GAME_CONFIG.particles.push({
+            x, y,
+            vx: (Math.random() - 0.5) * 8,
+            vy: (Math.random() - 0.5) * 8,
+            life: 30,
+            color: `hsl(${Math.random() * 60 + 10}, 100%, 50%)`
+        });
     }
-}
-
-function showCombo(combo) {
-    if (combo < 2) return;
-    const comboEl = document.getElementById('comboDisplay');
-    comboEl.textContent = `${combo}X COMBO!`;
-    comboEl.style.opacity = '1';
-    setTimeout(() => {
-        comboEl.style.opacity = '0';
-    }, 1000);
 }
 
 function updateParticles() {
-    game.particles = game.particles.filter(p => p.update());
-}
+    GAME_CONFIG.particles = GAME_CONFIG.particles.filter(p => {
+        p.x += p.vx;
+        p.y += p.vy;
+        p.vy += 0.3;
+        p.life--;
 
-function drawParticles(ctx) {
-    game.particles.forEach(p => p.draw(ctx));
-}
+        ctx.fillStyle = p.color;
+        ctx.globalAlpha = p.life / 30;
+        ctx.fillRect(p.x, p.y, 6, 6);
+        ctx.globalAlpha = 1;
 
-// Stage Management
-function loadBackgrounds() {
-    CONFIG.stages.forEach((stage, i) => {
-        const img = new Image();
-        img.onload = () => {
-            game.backgrounds[i] = img;
-            if (Object.keys(game.backgrounds).length === CONFIG.stages.length) {
-                game.bgLoaded = true;
-                console.log('✓ All backgrounds loaded');
-            }
-        };
-        img.src = `assets/backgrounds/${stage.bg}`;
+        return p.life > 0;
     });
 }
 
-function nextRound() {
-    game.currentStage = (game.currentStage + 1) % CONFIG.stages.length;
-    const stage = CONFIG.stages[game.currentStage];
-
-    document.getElementById('roundInfo').textContent = `ROUND ${game.round} - FIGHT!`;
-    document.getElementById('stageInfo').textContent = stage.name;
-
-    // Reset fighters
-    game.player.health = game.player.maxHealth;
-    game.player.stamina = game.player.maxStamina;
-    game.player.x = 200;
-    game.player.y = stage.floor - game.player.height;
-    game.player.updateHealthUI();
-
-    game.enemy = new Fighter(700, stage.floor - 80, false);
-
-    game.paused = false;
-}
-
-// Input Handling
+// Input handling
 const keys = {};
-
-document.addEventListener('keydown', (e) => {
+document.addEventListener('keydown', e => {
     keys[e.key.toLowerCase()] = true;
-
     if (e.key === ' ') {
         e.preventDefault();
-        if (game.player) game.player.dodge();
-    }
-
-    if (e.key.toLowerCase() === 'r') {
-        location.reload();
+        if (player) player.performDodge();
     }
 });
 
-document.addEventListener('keyup', (e) => {
+document.addEventListener('keyup', e => {
     keys[e.key.toLowerCase()] = false;
 });
 
-canvas.addEventListener('mousedown', (e) => {
-    e.preventDefault();
-    if (!game.player) return;
-
-    if (e.button === 0) { // Left click - Attack
-        game.player.attack();
-    } else if (e.button === 2) { // Right click - Block
-        game.player.block(true);
+canvas.addEventListener('mousedown', e => {
+    if (e.button === 0) { // Left click - attack
+        if (player) player.performAttack(enemy);
+    } else if (e.button === 2) { // Right click - block
+        if (player) player.performBlock();
     }
 });
 
-canvas.addEventListener('mouseup', (e) => {
-    if (e.button === 2 && game.player) {
-        game.player.block(false);
+canvas.addEventListener('contextmenu', e => e.preventDefault());
+
+// UI Updates
+function updateHealthBar(who, health) {
+    const bar = document.getElementById(`${who}Health`);
+    if (bar) {
+        bar.style.width = `${health}%`;
+        if (health < 30) {
+            bar.style.background = 'linear-gradient(90deg, #ff0000, #ff3333)';
+        } else if (health < 60) {
+            bar.style.background = 'linear-gradient(90deg, #ff6b00, #ff9500)';
+        }
     }
-});
 
-canvas.addEventListener('contextmenu', (e) => e.preventDefault());
-
-// Player Movement
-function handlePlayerMovement() {
-    if (!game.player || !game.player.canMove || game.paused) return;
-
-    if (keys['a']) {
-        game.player.velocityX = -CONFIG.moveSpeed;
-        if (game.player.grounded && game.player.state !== 'block') {
-            game.player.setState('walk');
-        }
-    } else if (keys['d']) {
-        game.player.velocityX = CONFIG.moveSpeed;
-        if (game.player.grounded && game.player.state !== 'block') {
-            game.player.setState('walk');
-        }
-    } else if (game.player.grounded && !game.player.isAttacking && !game.player.isBlocking) {
-        if (Math.abs(game.player.velocityX) < 0.5) {
-            game.player.setState('idle');
-        }
+    // Check game over
+    if (health <= 0 && !GAME_CONFIG.gameOver) {
+        GAME_CONFIG.gameOver = true;
+        setTimeout(() => showGameOver(who === 'enemy'), 1000);
     }
 }
 
-// Game Loop
-let lastTime = 0;
+function showGameOver(playerWon) {
+    const gameOverDiv = document.getElementById('gameOver');
+    const winnerText = document.getElementById('winnerText');
 
-function gameLoop(timestamp) {
-    const deltaTime = timestamp - lastTime || 16;
+    if (playerWon) {
+        winnerText.textContent = 'VICTORY!';
+        winnerText.style.color = '#00ff00';
+    } else {
+        winnerText.textContent = 'DEFEAT!';
+        winnerText.style.color = '#ff0000';
+        document.querySelector('#gameOver button').textContent = 'RETRY';
+    }
+
+    gameOverDiv.style.display = 'block';
+}
+
+function nextStage() {
+    if (GAME_CONFIG.playerHealth <= 0) {
+        location.reload();
+        return;
+    }
+
+    GAME_CONFIG.currentStage++;
+    if (GAME_CONFIG.currentStage > 3) {
+        alert('YOU WIN THE TOURNAMENT!');
+        location.reload();
+        return;
+    }
+
+    location.reload(); // Simple reload for now
+}
+
+// Game objects
+let player, enemy, stageBackground;
+
+// Game initialization
+async function init() {
+    document.getElementById('loading').style.display = 'block';
+
+    // Load stage background
+    stageBackground = new Image();
+    stageBackground.src = GAME_CONFIG.stages[GAME_CONFIG.currentStage - 1].bg;
+
+    // Create fighters
+    player = new Fighter(200, 380, true);
+    enemy = new Fighter(850, 380, false);
+
+    // Wait for assets
+    await new Promise(resolve => setTimeout(resolve, 1500));
+
+    document.getElementById('loading').style.display = 'none';
+
+    // Update stage info
+    document.getElementById('stageInfo').textContent = 
+        `STAGE ${GAME_CONFIG.currentStage} - ${GAME_CONFIG.stages[GAME_CONFIG.currentStage - 1].name.toUpperCase()}`;
+
+    // Start game loop
+    gameLoop();
+}
+
+// Main game loop
+let lastTime = 0;
+function gameLoop(timestamp = 0) {
+    const deltaTime = timestamp - lastTime;
     lastTime = timestamp;
 
-    // Apply screen shake
-    let shakeX = 0, shakeY = 0;
-    if (game.screenShake > 0) {
-        shakeX = (Math.random() - 0.5) * game.screenShake;
-        shakeY = (Math.random() - 0.5) * game.screenShake;
-        game.screenShake *= 0.9;
-        if (game.screenShake < 0.5) game.screenShake = 0;
-    }
-
-    ctx.save();
-    ctx.translate(shakeX, shakeY);
+    // Clear
+    ctx.fillStyle = '#1a1a2e';
+    ctx.fillRect(0, 0, canvas.width, canvas.height);
 
     // Draw background
-    if (game.bgLoaded && game.backgrounds[game.currentStage]) {
-        ctx.drawImage(game.backgrounds[game.currentStage], 0, 0, CONFIG.canvas.width, CONFIG.canvas.height);
-    } else {
-        ctx.fillStyle = '#2d3748';
-        ctx.fillRect(0, 0, CONFIG.canvas.width, CONFIG.canvas.height);
+    if (stageBackground.complete) {
+        ctx.drawImage(stageBackground, 0, 0, canvas.width, canvas.height);
     }
 
-    // Draw floor line
-    const stage = CONFIG.stages[game.currentStage];
-    ctx.strokeStyle = '#ffd700';
-    ctx.lineWidth = 3;
-    ctx.beginPath();
-    ctx.moveTo(0, stage.floor);
-    ctx.lineTo(CONFIG.canvas.width, stage.floor);
-    ctx.stroke();
+    // Draw ground overlay
+    ctx.fillStyle = 'rgba(0,0,0,0.3)';
+    ctx.fillRect(0, 530, canvas.width, 70);
 
-    // Update and draw game objects
-    handlePlayerMovement();
+    // Update and draw fighters
+    if (!GAME_CONFIG.gameOver) {
+        // Player movement
+        if (!player.animLocked) {
+            if (keys['a']) {
+                player.velocityX = -player.speed;
+                if (!player.attacking) player.setState('walkBackward');
+            } else if (keys['d']) {
+                player.velocityX = player.speed;
+                if (!player.attacking) player.setState('walkForward');
+            } else if (!player.attacking && !player.blocking && !player.dodging) {
+                player.setState('idle');
+            }
+        }
+
+        player.update(deltaTime, enemy);
+        enemy.update(deltaTime, player);
+    }
+
+    player.draw(ctx);
+    enemy.draw(ctx);
+
+    // Update particles
     updateParticles();
-
-    if (game.player) {
-        game.player.update(deltaTime);
-        game.player.draw(ctx);
-    }
-
-    if (game.enemy) {
-        game.enemy.update(deltaTime);
-        game.enemy.draw(ctx);
-    }
-
-    drawParticles(ctx);
-
-    ctx.restore();
 
     requestAnimationFrame(gameLoop);
 }
 
-// Initialize Game
-function initGame() {
-    console.log('🎮 Initializing Medieval Knight Fighter...');
-
-    loadBackgrounds();
-
-    const stage = CONFIG.stages[game.currentStage];
-    game.player = new Fighter(200, stage.floor - 80, true);
-    game.enemy = new Fighter(700, stage.floor - 80, false);
-
-    document.getElementById('roundInfo').textContent = 'ROUND 1 - FIGHT!';
-    document.getElementById('stageInfo').textContent = stage.name;
-
-    // Wait for sprites to load
-    setTimeout(() => {
-        console.log('✓ Game initialized! Starting...');
-        requestAnimationFrame(gameLoop);
-    }, 500);
-}
-
-// Start game when page loads
-window.addEventListener('load', initGame);
-
-console.log('⚔️ Medieval Knight Fighter loaded!');
+// Start game
+window.addEventListener('load', init);
