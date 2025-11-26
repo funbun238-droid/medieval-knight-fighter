@@ -3,245 +3,207 @@
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>⚔️ Medieval Knight Fighter ⚔️</title>
+    <title>Medieval Knight Fighter - Remastered</title>
     <style>
         * { margin: 0; padding: 0; box-sizing: border-box; }
 
         body {
-            background: linear-gradient(135deg, #0f0c29, #302b63, #24243e);
+            background: #0a0e27;
             font-family: 'Press Start 2P', 'Courier New', monospace;
+            overflow: hidden;
             display: flex;
             justify-content: center;
             align-items: center;
             min-height: 100vh;
-            color: #fff;
-            overflow: hidden;
         }
 
-        #gameContainer {
-            text-align: center;
+        #gameWrapper {
             position: relative;
+            display: inline-block;
         }
 
-        #gameTitle {
-            font-size: 2.5em;
-            margin-bottom: 15px;
-            color: #ffd700;
-            text-shadow: 
-                0 0 10px #ff6b00,
-                0 0 20px #ff6b00,
-                0 0 30px #ff0000,
-                3px 3px 0 #000;
-            animation: titleGlow 2s ease-in-out infinite;
-        }
-
-        @keyframes titleGlow {
-            0%, 100% { text-shadow: 0 0 10px #ff6b00, 0 0 20px #ff6b00, 0 0 30px #ff0000, 3px 3px 0 #000; }
-            50% { text-shadow: 0 0 20px #ff6b00, 0 0 30px #ff6b00, 0 0 40px #ff0000, 3px 3px 0 #000; }
+        canvas {
+            display: block;
+            border: 5px solid #c9a961;
+            box-shadow: 0 0 50px rgba(201, 169, 97, 0.6),
+                        inset 0 0 20px rgba(0,0,0,0.5);
+            image-rendering: pixelated;
+            image-rendering: crisp-edges;
+            background: #000;
         }
 
         #ui {
-            display: flex;
-            justify-content: space-between;
-            align-items: center;
-            max-width: 1024px;
-            margin: 0 auto 15px;
-            padding: 0 20px;
+            position: absolute;
+            top: 0;
+            left: 0;
+            right: 0;
+            padding: 20px;
+            pointer-events: none;
         }
 
-        .fighter-ui {
-            flex: 1;
-            max-width: 400px;
-        }
-
-        .fighter-name {
-            font-size: 1.2em;
-            margin-bottom: 8px;
-            text-transform: uppercase;
-        }
-
-        .player-name { color: #4a9eff; text-align: left; }
-        .enemy-name { color: #ff4a4a; text-align: right; }
-
-        .health-container {
-            background: #1a1a1a;
-            border: 3px solid #ffd700;
-            border-radius: 5px;
-            height: 35px;
+        .healthBar {
             position: relative;
+            width: 40%;
+            height: 40px;
+            background: rgba(0,0,0,0.8);
+            border: 3px solid #c9a961;
+            border-radius: 8px;
             overflow: hidden;
-            box-shadow: inset 0 0 10px rgba(0,0,0,0.5);
+            box-shadow: 0 4px 10px rgba(0,0,0,0.5);
         }
 
-        .health-bar {
+        #playerHealthBar { float: left; }
+        #enemyHealthBar { float: right; }
+
+        .healthFill {
+            position: absolute;
+            left: 0;
+            top: 0;
             height: 100%;
-            transition: width 0.3s ease-out;
-            position: relative;
-            background: linear-gradient(90deg, #ff0000, #ff6b6b, #ff0000);
-            box-shadow: 
-                inset 0 0 10px rgba(255,255,255,0.3),
-                0 0 10px rgba(255,0,0,0.5);
+            width: 100%;
+            background: linear-gradient(90deg, #ff0000, #ff6b00, #ffd700);
+            transition: width 0.3s ease, background 0.3s ease;
         }
 
-        .health-text {
+        .healthLabel {
+            position: absolute;
+            width: 100%;
+            text-align: center;
+            line-height: 40px;
+            color: #fff;
+            font-size: 12px;
+            text-shadow: 2px 2px 4px #000;
+            z-index: 1;
+        }
+
+        #stageInfo {
+            position: absolute;
+            top: 70px;
+            left: 50%;
+            transform: translateX(-50%);
+            color: #c9a961;
+            font-size: 14px;
+            text-shadow: 2px 2px 4px #000;
+            background: rgba(0,0,0,0.7);
+            padding: 10px 20px;
+            border-radius: 5px;
+            border: 2px solid #c9a961;
+        }
+
+        #controls {
+            position: absolute;
+            bottom: 20px;
+            left: 50%;
+            transform: translateX(-50%);
+            background: rgba(0,0,0,0.9);
+            padding: 15px 30px;
+            border-radius: 10px;
+            border: 2px solid #c9a961;
+            color: #c9a961;
+            font-size: 10px;
+            text-align: center;
+        }
+
+        .key {
+            background: #c9a961;
+            color: #000;
+            padding: 3px 8px;
+            border-radius: 3px;
+            margin: 0 3px;
+            font-weight: bold;
+        }
+
+        #gameOver {
             position: absolute;
             top: 50%;
             left: 50%;
             transform: translate(-50%, -50%);
-            font-size: 0.9em;
-            text-shadow: 2px 2px 0 #000;
-            z-index: 1;
-        }
-
-        .stamina-bar {
-            height: 8px;
-            background: #2a2a2a;
-            border: 2px solid #4a9eff;
-            border-radius: 3px;
-            margin-top: 5px;
-            overflow: hidden;
-        }
-
-        .stamina-fill {
-            height: 100%;
-            background: linear-gradient(90deg, #4a9eff, #00d4ff);
-            transition: width 0.2s linear;
-        }
-
-        #stageInfo {
+            background: rgba(0,0,0,0.95);
+            padding: 40px 60px;
+            border-radius: 20px;
+            border: 5px solid #c9a961;
             text-align: center;
-            font-size: 1.1em;
-            color: #ffd700;
-            margin-bottom: 5px;
+            display: none;
+            z-index: 100;
         }
 
-        canvas {
-            border: 5px solid #ffd700;
-            box-shadow: 
-                0 0 30px rgba(255, 215, 0, 0.6),
-                inset 0 0 20px rgba(0,0,0,0.3);
-            background: #000;
-            display: block;
-            margin: 0 auto;
-            image-rendering: pixelated;
-            image-rendering: crisp-edges;
+        #gameOver h1 {
+            font-size: 48px;
+            color: #c9a961;
+            margin-bottom: 20px;
+            text-shadow: 0 0 20px #c9a961;
         }
 
-        #controls {
-            margin-top: 20px;
-            padding: 20px;
-            background: rgba(0,0,0,0.7);
-            border: 3px solid #ffd700;
-            border-radius: 10px;
-            max-width: 900px;
-            margin-left: auto;
-            margin-right: auto;
-        }
-
-        .controls-grid {
-            display: grid;
-            grid-template-columns: repeat(2, 1fr);
-            gap: 10px;
-            margin-top: 15px;
-        }
-
-        .control-item {
-            background: rgba(255, 215, 0, 0.1);
-            padding: 10px;
-            border-radius: 5px;
-            border: 2px solid #ffd700;
-        }
-
-        .key {
-            background: linear-gradient(145deg, #ffd700, #ffed4e);
+        #gameOver button {
+            background: #c9a961;
             color: #000;
-            padding: 5px 12px;
+            border: none;
+            padding: 15px 40px;
+            font-size: 16px;
+            font-family: inherit;
+            cursor: pointer;
             border-radius: 5px;
-            font-weight: bold;
-            box-shadow: 0 4px 0 #b8860b;
-            display: inline-block;
-            margin: 0 5px;
+            margin-top: 20px;
+            transition: all 0.3s;
         }
 
-        #comboDisplay {
+        #gameOver button:hover {
+            background: #fff;
+            transform: scale(1.1);
+        }
+
+        #loading {
             position: absolute;
-            top: 120px;
+            top: 50%;
             left: 50%;
-            transform: translateX(-50%);
-            font-size: 2em;
-            color: #ffd700;
-            text-shadow: 0 0 10px #ff6b00, 3px 3px 0 #000;
-            opacity: 0;
-            transition: opacity 0.3s;
-            pointer-events: none;
+            transform: translate(-50%, -50%);
+            color: #c9a961;
+            font-size: 20px;
+            text-align: center;
         }
 
-        .round-indicator {
-            font-size: 1.5em;
-            color: #ffd700;
-            text-align: center;
-            margin-bottom: 10px;
-            text-shadow: 2px 2px 0 #000;
+        .loadingDot {
+            animation: blink 1s infinite;
+        }
+
+        @keyframes blink {
+            0%, 100% { opacity: 0; }
+            50% { opacity: 1; }
         }
     </style>
 </head>
 <body>
-    <div id="gameContainer">
-        <h1 id="gameTitle">⚔️ MEDIEVAL KNIGHT FIGHTER ⚔️</h1>
-
-        <div class="round-indicator" id="roundInfo">ROUND 1 - FIGHT!</div>
-        <div id="stageInfo">🏰 Castle Arena</div>
+    <div id="gameWrapper">
+        <canvas id="canvas" width="1200" height="600"></canvas>
 
         <div id="ui">
-            <div class="fighter-ui">
-                <div class="fighter-name player-name">⚔️ PLAYER</div>
-                <div class="health-container">
-                    <div class="health-bar" id="playerHealth" style="width: 100%"></div>
-                    <div class="health-text" id="playerHealthText">100 / 100</div>
-                </div>
-                <div class="stamina-bar">
-                    <div class="stamina-fill" id="playerStamina" style="width: 100%"></div>
-                </div>
+            <div id="playerHealthBar" class="healthBar">
+                <div class="healthFill" id="playerHealth" style="width: 100%"></div>
+                <div class="healthLabel">PLAYER</div>
             </div>
-
-            <div class="fighter-ui">
-                <div class="fighter-name enemy-name">ENEMY 👹</div>
-                <div class="health-container">
-                    <div class="health-bar" id="enemyHealth" style="width: 100%"></div>
-                    <div class="health-text" id="enemyHealthText">100 / 100</div>
-                </div>
-                <div class="stamina-bar">
-                    <div class="stamina-fill" id="enemyStamina" style="width: 100%"></div>
-                </div>
+            <div id="enemyHealthBar" class="healthBar">
+                <div class="healthFill" id="enemyHealth" style="width: 100%"></div>
+                <div class="healthLabel">ENEMY</div>
             </div>
+            <div id="stageInfo">STAGE 1 - CASTLE ARENA</div>
         </div>
 
-        <div id="comboDisplay"></div>
-
-        <canvas id="gameCanvas" width="1024" height="600"></canvas>
-
         <div id="controls">
-            <h2 style="color: #ffd700; margin-bottom: 15px;">🎮 CONTROLS</h2>
-            <div class="controls-grid">
-                <div class="control-item">
-                    <span class="key">A</span> Move Left (Backward)
-                </div>
-                <div class="control-item">
-                    <span class="key">D</span> Move Right (Forward)
-                </div>
-                <div class="control-item">
-                    <span class="key">LEFT CLICK</span> Attack (Costs Stamina)
-                </div>
-                <div class="control-item">
-                    <span class="key">RIGHT CLICK</span> Block (Hold)
-                </div>
-                <div class="control-item">
-                    <span class="key">SPACEBAR</span> Dodge Roll (Costs Stamina)
-                </div>
-                <div class="control-item">
-                    <span class="key">R</span> Restart Game
-                </div>
-            </div>
+            <span class="key">A</span> Move Left | 
+            <span class="key">D</span> Move Right | 
+            <span class="key">CLICK</span> Attack | 
+            <span class="key">RIGHT CLICK</span> Block | 
+            <span class="key">SPACE</span> Dodge
+        </div>
+
+        <div id="gameOver">
+            <h1 id="winnerText">VICTORY!</h1>
+            <p style="color: #c9a961; margin: 20px 0;">Press button to continue</p>
+            <button onclick="nextStage()">NEXT STAGE</button>
+        </div>
+
+        <div id="loading">
+            LOADING<span class="loadingDot">.</span><span class="loadingDot" style="animation-delay: 0.2s">.</span><span class="loadingDot" style="animation-delay: 0.4s">.</span>
         </div>
     </div>
 
