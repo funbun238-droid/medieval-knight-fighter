@@ -2,285 +2,424 @@
 const canvas = document.getElementById('gameCanvas');
 const ctx = canvas.getContext('2d');
 
-// Sprite Animation Manager
-class SpriteSheet {
-    constructor(src, frameWidth, frameHeight, frameCount) {
-        this.image = new Image();
-        this.image.src = src;
-        this.frameWidth = frameWidth;
-        this.frameHeight = frameHeight;
-        this.frameCount = frameCount;
-        this.currentFrame = 0;
-        this.loaded = false;
-        this.image.onload = () => { this.loaded = true; };
-    }
+// Game State
+const gameState = {
+    player: null,
+    enemy: null,
+    keys: {},
+    mouseButtons: {},
+    gameLoop: null,
+    playerHealth: 100,
+    enemyHealth: 100
+};
 
-    draw(ctx, x, y, scale = 1) {
-        if (!this.loaded) return;
-        const sx = this.currentFrame * this.frameWidth;
-        ctx.drawImage(
-            this.image, 
-            sx, 0, this.frameWidth, this.frameHeight,
-            x, y, this.frameWidth * scale, this.frameHeight * scale
-        );
+// Sprite Animation Configuration
+const SPRITE_CONFIG = {
+    player: {
+        idle: { frames: 4, fps: 8, sprite: 'knight_idle.webp' },
+        walkForward: { frames: 8, fps: 12, sprite: 'knight_walk_forward.webp' },
+        walkBackward: { frames: 8, fps: 12, sprite: 'knight_walk_backward.webp' },
+        attack: { frames: 6, fps: 15, sprite: 'knight_attack.webp', damage: 10 },
+        block: { frames: 4, fps: 8, sprite: 'knight_block.webp' },
+        dodge: { frames: 6, fps: 18, sprite: 'knight_dodge.webp' }
+    },
+    enemy: {
+        idle: { frames: 4, fps: 8, sprite: 'enemy_idle.webp' },
+        attack: { frames: 6, fps: 15, sprite: 'enemy_attack.webp', damage: 8 },
+        block: { frames: 4, fps: 8, sprite: 'enemy_block.webp' }
     }
-
-    nextFrame() {
-        this.currentFrame = (this.currentFrame + 1) % this.frameCount;
-    }
-
-    reset() {
-        this.currentFrame = 0;
-    }
-}
+};
 
 // Knight Character Class
 class Knight {
     constructor(x, y, isPlayer = true) {
         this.x = x;
         this.y = y;
+        this.width = 64;
+        this.height = 64;
         this.isPlayer = isPlayer;
-        this.health = 100;
-        this.scale = 3;
+        this.velocityX = 0;
+        this.velocityY = 0;
+        this.speed = 3;
 
-        // Load sprite sheets
-        this.sprites = {
-            idle: new SpriteSheet('assets/sprites/knight_idle.webp', 64, 64, 4),
-            walkForward: new SpriteSheet('assets/sprites/knight_walk_forward.webp', 64, 64, 8),
-            walkBackward: new SpriteSheet('assets/sprites/knight_walk_backward.webp', 64, 64, 8),
-            attack: new SpriteSheet('assets/sprites/knight_attack.webp', 64, 64, 6),
-            block: new SpriteSheet('assets/sprites/knight_block.webp', 64, 64, 5),
-            dodge: new SpriteSheet('assets/sprites/knight_dodge.webp', 64, 64, 6)
-        };
-
+        // Animation state
         this.currentAnimation = 'idle';
-        this.animationSpeed = 6;
-        this.frameCounter = 0;
+        this.currentFrame = 0;
+        this.frameTimer = 0;
+        this.animationLocked = false;
+        this.animationFinished = false;
+
+        // Combat state
         this.isAttacking = false;
         this.isBlocking = false;
         this.isDodging = false;
-        this.velocity = 3;
+        this.canTakeDamage = true;
+
+        // Sprites
+        this.sprites = {};
+        this.spritesLoaded = false;
+
+        // AI state (for enemy)
+        if (!isPlayer) {
+            this.ai = {
+                state: 'idle',
+                timer: 0,
+                actionCooldown: 0,
+                lastAction: null,
+                aggressionLevel: 0.5
+            };
+        }
     }
 
-    update(keys) {
-        this.frameCounter++;
+    async loadSprites() {
+        const config = this.isPlayer ? SPRITE_CONFIG.player : SPRITE_CONFIG.enemy;
+        const promises = [];
 
-        // Animation frame update
-        if (this.frameCounter % this.animationSpeed === 0) {
-            this.sprites[this.currentAnimation].nextFrame();
-
-            // Check if action animations finished
-            if (this.isAttacking && this.sprites.attack.currentFrame === 0 && this.frameCounter > 10) {
-                this.isAttacking = false;
-                this.currentAnimation = 'idle';
-            }
-            if (this.isDodging && this.sprites.dodge.currentFrame === 0 && this.frameCounter > 10) {
-                this.isDodging = false;
-                this.currentAnimation = 'idle';
-            }
+        for (const [animName, animData] of Object.entries(config)) {
+            promises.push(new Promise((resolve, reject) => {
+                const img = new Image();
+                img.onload = () => {
+                    this.sprites[animName] = {
+                        image: img,
+                        frames: animData.frames,
+                        fps: animData.fps,
+                        frameWidth: img.width / animData.frames,
+                        frameHeight: img.height,
+                        damage: animData.damage || 0
+                    };
+                    resolve();
+                };
+                img.onerror = reject;
+                img.src = `assets/sprites/${animData.sprite}`;
+            }));
         }
 
-        // Handle movement and actions
-        if (!this.isAttacking && !this.isDodging) {
-            if (keys.blocking) {
-                this.isBlocking = true;
-                this.currentAnimation = 'block';
-            } else {
-                this.isBlocking = false;
+        await Promise.all(promises);
+        this.spritesLoaded = true;
+        console.log(`✓ Loaded ${Object.keys(this.sprites).length} sprites for ${this.isPlayer ? 'Player' : 'Enemy'}`);
+    }
 
-                if (keys.left && this.x > 50) {
-                    this.x -= this.velocity;
-                    this.currentAnimation = 'walkBackward';
-                } else if (keys.right && this.x < canvas.width - 250) {
-                    this.x += this.velocity;
-                    this.currentAnimation = 'walkForward';
-                } else if (!this.isBlocking) {
-                    this.currentAnimation = 'idle';
+    setAnimation(animName, lock = false) {
+        if (this.animationLocked && !this.animationFinished) return;
+
+        if (this.currentAnimation !== animName) {
+            this.currentAnimation = animName;
+            this.currentFrame = 0;
+            this.frameTimer = 0;
+            this.animationLocked = lock;
+            this.animationFinished = false;
+        }
+    }
+
+    updateAnimation(deltaTime) {
+        if (!this.spritesLoaded) return;
+
+        const sprite = this.sprites[this.currentAnimation];
+        if (!sprite) return;
+
+        const frameTime = 1000 / sprite.fps;
+        this.frameTimer += deltaTime;
+
+        if (this.frameTimer >= frameTime) {
+            this.frameTimer = 0;
+            this.currentFrame++;
+
+            if (this.currentFrame >= sprite.frames) {
+                this.currentFrame = 0;
+
+                if (this.animationLocked) {
+                    this.animationFinished = true;
+                    this.animationLocked = false;
+
+                    // Reset combat states when animation finishes
+                    if (this.currentAnimation === 'attack') {
+                        this.isAttacking = false;
+                        this.checkAttackHit();
+                    } else if (this.currentAnimation === 'dodge') {
+                        this.isDodging = false;
+                        this.canTakeDamage = true;
+                    }
+
+                    this.setAnimation('idle');
                 }
             }
-        }
-    }
 
-    attack() {
-        if (!this.isAttacking && !this.isDodging) {
-            this.isAttacking = true;
-            this.currentAnimation = 'attack';
-            this.sprites.attack.reset();
-            this.frameCounter = 0;
-        }
-    }
-
-    dodge() {
-        if (!this.isDodging && !this.isAttacking) {
-            this.isDodging = true;
-            this.currentAnimation = 'dodge';
-            this.sprites.dodge.reset();
-            this.frameCounter = 0;
+            // Trigger attack damage in the middle of attack animation
+            if (this.currentAnimation === 'attack' && this.currentFrame === Math.floor(sprite.frames / 2)) {
+                this.dealDamage();
+            }
         }
     }
 
     draw(ctx) {
-        this.sprites[this.currentAnimation].draw(ctx, this.x, this.y, this.scale);
+        if (!this.spritesLoaded) {
+            // Draw placeholder
+            ctx.fillStyle = this.isPlayer ? '#4299e1' : '#e53e3e';
+            ctx.fillRect(this.x, this.y, this.width, this.height);
+            return;
+        }
 
-        // Draw health bar
-        ctx.fillStyle = '#333';
-        ctx.fillRect(this.x, this.y - 30, 192, 20);
-        ctx.fillStyle = this.health > 50 ? '#4caf50' : this.health > 25 ? '#ff9800' : '#f44336';
-        ctx.fillRect(this.x + 2, this.y - 28, (this.health / 100) * 188, 16);
-        ctx.strokeStyle = '#fff';
-        ctx.strokeRect(this.x, this.y - 30, 192, 20);
-    }
-}
+        const sprite = this.sprites[this.currentAnimation];
+        if (!sprite) return;
 
-// AI Enemy Class
-class EnemyKnight extends Knight {
-    constructor(x, y) {
-        super(x, y, false);
-        this.aiState = 'idle';
-        this.aiTimer = 0;
-        this.attackRange = 200;
-    }
+        ctx.save();
 
-    updateAI(player) {
-        this.aiTimer++;
-
-        const distance = Math.abs(this.x - player.x);
-
-        // AI Decision Making
-        if (distance > this.attackRange) {
-            // Move towards player
-            if (this.x > player.x) {
-                this.x -= this.velocity * 0.7;
-                this.currentAnimation = 'walkBackward';
-            } else {
-                this.x += this.velocity * 0.7;
-                this.currentAnimation = 'walkForward';
-            }
+        // Flip enemy sprite to face left
+        if (!this.isPlayer) {
+            ctx.translate(this.x + this.width, this.y);
+            ctx.scale(-1, 1);
+            ctx.drawImage(
+                sprite.image,
+                this.currentFrame * sprite.frameWidth, 0,
+                sprite.frameWidth, sprite.frameHeight,
+                0, 0,
+                this.width, this.height
+            );
         } else {
-            // Combat range - attack or block randomly
-            if (this.aiTimer % 90 === 0) {
-                const action = Math.random();
-                if (action < 0.4) {
-                    this.attack();
-                } else if (action < 0.7) {
-                    this.isBlocking = true;
-                    this.currentAnimation = 'block';
+            ctx.drawImage(
+                sprite.image,
+                this.currentFrame * sprite.frameWidth, 0,
+                sprite.frameWidth, sprite.frameHeight,
+                this.x, this.y,
+                this.width, this.height
+            );
+        }
+
+        ctx.restore();
+    }
+    
+    checkAttackHit() {
+        // Check if attack connects with opponent
+        const opponent = this.isPlayer ? gameState.enemy : gameState.player;
+        if (!opponent) return;
+
+        const distance = Math.abs(this.x - opponent.x);
+        const attackRange = 80;
+
+        if (distance < attackRange && !opponent.isBlocking && opponent.canTakeDamage) {
+            const damage = this.sprites[this.currentAnimation].damage;
+            if (this.isPlayer) {
+                gameState.enemyHealth = Math.max(0, gameState.enemyHealth - damage);
+                updateHealthBar('enemy', gameState.enemyHealth);
+            } else {
+                gameState.playerHealth = Math.max(0, gameState.playerHealth - damage);
+                updateHealthBar('player', gameState.playerHealth);
+            }
+            console.log(`${this.isPlayer ? 'Player' : 'Enemy'} dealt ${damage} damage!`);
+        }
+    }
+
+    dealDamage() {
+        // Called during attack animation
+        this.checkAttackHit();
+    }
+
+    // Enemy AI Logic
+    updateAI(player) {
+        if (this.isPlayer || !this.spritesLoaded) return;
+
+        this.ai.timer += 16.67; // ~60fps
+        this.ai.actionCooldown = Math.max(0, this.ai.actionCooldown - 16.67);
+
+        if (this.animationLocked) return;
+
+        const distanceToPlayer = player.x - this.x;
+        const absDistance = Math.abs(distanceToPlayer);
+
+        // Decision making
+        if (this.ai.actionCooldown <= 0) {
+            const rand = Math.random();
+
+            if (absDistance < 100) {
+                // Close range - attack or block
+                if (player.isAttacking && rand > 0.6) {
+                    this.performBlock();
+                } else if (rand > 0.5) {
+                    this.performAttack();
                 } else {
-                    this.dodge();
+                    this.performBlock();
                 }
-            } else if (this.aiTimer % 90 > 30) {
-                this.isBlocking = false;
-                if (!this.isAttacking && !this.isDodging) {
-                    this.currentAnimation = 'idle';
+                this.ai.actionCooldown = 1000 + Math.random() * 500;
+            } else if (absDistance < 250) {
+                // Medium range - approach or attack
+                if (rand > 0.7) {
+                    this.performAttack();
+                    this.ai.actionCooldown = 1200;
+                } else {
+                    // Move towards player
+                    this.velocityX = distanceToPlayer > 0 ? -2 : 2;
+                    this.setAnimation('idle');
+                    this.ai.actionCooldown = 300;
                 }
+            } else {
+                // Far range - approach
+                this.velocityX = distanceToPlayer > 0 ? -2 : 2;
+                this.setAnimation('idle');
+                this.ai.actionCooldown = 500;
             }
         }
 
-        // Update animations
-        this.frameCounter++;
-        if (this.frameCounter % this.animationSpeed === 0) {
-            this.sprites[this.currentAnimation].nextFrame();
+        // Apply velocity
+        this.x += this.velocityX;
+        this.velocityX *= 0.9; // Friction
 
-            if (this.isAttacking && this.sprites.attack.currentFrame === 0 && this.frameCounter > 10) {
-                this.isAttacking = false;
-                // Deal damage to player if in range
-                if (distance < 150 && !player.isBlocking && !player.isDodging) {
-                    player.health = Math.max(0, player.health - 10);
+        // Keep in bounds
+        this.x = Math.max(400, Math.min(700, this.x));
+    }
+
+    performAttack() {
+        if (this.animationLocked) return;
+        this.setAnimation('attack', true);
+        this.isAttacking = true;
+    }
+
+    performBlock() {
+        if (this.animationLocked) return;
+        this.setAnimation('block', true);
+        this.isBlocking = true;
+        setTimeout(() => { this.isBlocking = false; }, 800);
+    }
+
+    performDodge() {
+        if (this.animationLocked || !this.isPlayer) return;
+        this.setAnimation('dodge', true);
+        this.isDodging = true;
+        this.canTakeDamage = false;
+
+        // Quick movement during dodge
+        const dodgeDirection = gameState.keys['a'] ? -1 : 1;
+        this.x += dodgeDirection * 60;
+    }
+
+    update(deltaTime) {
+        this.updateAnimation(deltaTime);
+
+        if (this.isPlayer) {
+            // Player movement
+            if (!this.animationLocked) {
+                if (gameState.keys['a']) {
+                    this.x -= this.speed;
+                    if (!this.isAttacking && !this.isBlocking) {
+                        this.setAnimation('walkBackward');
+                    }
+                } else if (gameState.keys['d']) {
+                    this.x += this.speed;
+                    if (!this.isAttacking && !this.isBlocking) {
+                        this.setAnimation('walkForward');
+                    }
+                } else if (!this.isAttacking && !this.isBlocking && !this.isDodging) {
+                    this.setAnimation('idle');
                 }
             }
-            if (this.isDodging && this.sprites.dodge.currentFrame === 0 && this.frameCounter > 10) {
-                this.isDodging = false;
-            }
+
+            // Keep player in bounds
+            this.x = Math.max(50, Math.min(350, this.x));
         }
     }
 }
 
-// Input Manager
-const keys = {
-    left: false,
-    right: false,
-    blocking: false
-};
+// Health Bar Updates
+function updateHealthBar(who, health) {
+    const bar = document.getElementById(`${who}Health`);
+    if (bar) {
+        bar.style.width = `${health}%`;
+    }
 
+    // Check for game over
+    if (health <= 0) {
+        setTimeout(() => {
+            alert(`${who === 'player' ? 'Enemy' : 'Player'} Wins! Reloading...`);
+            location.reload();
+        }, 500);
+    }
+}
+
+// Input Handling
 document.addEventListener('keydown', (e) => {
-    if (e.key === 'a' || e.key === 'A') keys.left = true;
-    if (e.key === 'd' || e.key === 'D') keys.right = true;
-    if (e.key === ' ') {
+    gameState.keys[e.key.toLowerCase()] = true;
+
+    if (e.key === ' ' || e.key === 'Spacebar') {
         e.preventDefault();
-        player.dodge();
+        if (gameState.player) {
+            gameState.player.performDodge();
+        }
     }
 });
 
 document.addEventListener('keyup', (e) => {
-    if (e.key === 'a' || e.key === 'A') keys.left = false;
-    if (e.key === 'd' || e.key === 'D') keys.right = false;
+    gameState.keys[e.key.toLowerCase()] = false;
 });
 
 canvas.addEventListener('mousedown', (e) => {
     e.preventDefault();
+
     if (e.button === 0) { // Left click - Attack
-        player.attack();
-        // Check if hit enemy
-        const distance = Math.abs(player.x - enemy.x);
-        if (distance < 150 && !enemy.isBlocking && !enemy.isDodging) {
-            enemy.health = Math.max(0, enemy.health - 15);
+        if (gameState.player) {
+            gameState.player.performAttack();
         }
     } else if (e.button === 2) { // Right click - Block
-        keys.blocking = true;
+        if (gameState.player) {
+            gameState.player.performBlock();
+        }
     }
 });
 
-canvas.addEventListener('mouseup', (e) => {
-    if (e.button === 2) {
-        keys.blocking = false;
-    }
+canvas.addEventListener('contextmenu', (e) => {
+    e.preventDefault();
 });
-
-canvas.addEventListener('contextmenu', (e) => e.preventDefault());
-
-// Initialize Game
-const player = new Knight(100, 350);
-const enemy = new EnemyKnight(900, 350);
 
 // Game Loop
-function gameLoop() {
+let lastTime = 0;
+function gameLoop(timestamp) {
+    const deltaTime = timestamp - lastTime;
+    lastTime = timestamp;
+
     // Clear canvas
-    ctx.clearRect(0, 0, canvas.width, canvas.height);
+    ctx.fillStyle = '#2d3748';
+    ctx.fillRect(0, 0, canvas.width, canvas.height);
 
-    // Draw ground
-    ctx.fillStyle = '#8b7355';
-    ctx.fillRect(0, canvas.height - 100, canvas.width, 100);
+    // Draw arena floor
+    ctx.fillStyle = '#1a202c';
+    ctx.fillRect(0, 450, canvas.width, 150);
+    ctx.strokeStyle = '#c9a961';
+    ctx.lineWidth = 2;
+    ctx.strokeRect(0, 450, canvas.width, 150);
 
-    // Update and draw
-    player.update(keys);
-    enemy.updateAI(player);
+    // Update and draw characters
+    if (gameState.player && gameState.enemy) {
+        gameState.player.update(deltaTime);
+        gameState.enemy.update(deltaTime);
+        gameState.enemy.updateAI(gameState.player);
 
-    player.draw(ctx);
-    enemy.draw(ctx);
-
-    // Check win/lose conditions
-    if (player.health <= 0) {
-        ctx.fillStyle = 'rgba(0, 0, 0, 0.7)';
-        ctx.fillRect(0, 0, canvas.width, canvas.height);
-        ctx.fillStyle = '#ff0000';
-        ctx.font = 'bold 72px Arial';
-        ctx.textAlign = 'center';
-        ctx.fillText('DEFEAT', canvas.width / 2, canvas.height / 2);
-        return;
-    } else if (enemy.health <= 0) {
-        ctx.fillStyle = 'rgba(0, 0, 0, 0.7)';
-        ctx.fillRect(0, 0, canvas.width, canvas.height);
-        ctx.fillStyle = '#00ff00';
-        ctx.font = 'bold 72px Arial';
-        ctx.textAlign = 'center';
-        ctx.fillText('VICTORY!', canvas.width / 2, canvas.height / 2);
-        return;
+        gameState.player.draw(ctx);
+        gameState.enemy.draw(ctx);
     }
 
     requestAnimationFrame(gameLoop);
 }
 
-// Start game when sprites loaded
-setTimeout(() => {
-    gameLoop();
-}, 1000);
+// Initialize Game
+async function initGame() {
+    console.log('🎮 Initializing Medieval Knight Fighter...');
+
+    // Create characters
+    gameState.player = new Knight(150, 350, true);
+    gameState.enemy = new Knight(600, 350, false);
+
+    // Load sprites
+    try {
+        await gameState.player.loadSprites();
+        await gameState.enemy.loadSprites();
+        console.log('✓ All sprites loaded successfully!');
+
+        // Start game loop
+        requestAnimationFrame(gameLoop);
+        console.log('✓ Game started!');
+    } catch (error) {
+        console.error('✗ Failed to load sprites:', error);
+        alert('Failed to load game assets. Please check the console for errors.');
+    }
+}
+
+// Start the game when page loads
+window.addEventListener('load', initGame);
